@@ -1,0 +1,183 @@
+import React, { useRef, useState } from "react";
+import { motion } from "framer-motion";
+
+export default function App() {
+  const [file, setFile] = useState(null);
+  const [result, setResult] = useState("");
+  const [state, setState] = useState("idle"); 
+  const [error, setError] = useState("");
+
+  const abortRef = useRef(null);
+
+  const API = import.meta.env.VITE_API_URL;
+
+  const resetOutput = () => {
+    setResult("");
+    setError("");
+    setState("idle");
+  };
+
+  const onFileChange = (e) => {
+    const selected = e.target.files?.[0];
+    setFile(selected || null);
+    resetOutput();
+  };
+
+  const runAnalysis = async () => {
+    if (!file || state === "loading" || state === "streaming") return;
+
+    setState("loading");
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${API}/analyze`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error("Server failed to process this file");
+      }
+
+      setState("streaming");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        accumulated += decoder.decode(value);
+        setResult(accumulated);
+      }
+
+      setState("done");
+    } catch (err) {
+      if (err.name === "AbortError") {
+        setState("idle");
+        return;
+      }
+
+      setError(err.message || "Unexpected failure");
+      setState("error");
+    }
+  };
+
+  const cancel = () => {
+    abortRef.current?.abort();
+    setState("idle");
+  };
+
+  const getStatusText = () => {
+    switch (state) {
+      case "idle":
+        return "Waiting for file";
+      case "loading":
+        return "Uploading & validating file";
+      case "streaming":
+        return "Receiving analysis stream";
+      case "done":
+        return "Analysis completed";
+      case "error":
+        return "Something went wrong";
+      default:
+        return "";
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white px-6 py-10">
+      <div className="max-w-3xl mx-auto">
+
+        {/* Header */}
+        <header className="mb-6">
+          <h1 className="text-3xl font-semibold">
+            File Analysis Tool
+          </h1>
+
+          <p className="text-gray-500 text-sm mt-1">
+            Upload a file and receive streamed analysis output from backend
+          </p>
+        </header>
+
+        {/* Upload Section */}
+        <section className="border border-gray-800 rounded-lg p-4">
+          <input type="file" onChange={onFileChange} />
+
+          {file && (
+            <p className="text-sm text-gray-400 mt-2">
+              Selected:{" "}
+              <span className="text-white">{file.name}</span>
+            </p>
+          )}
+
+          <div className="flex gap-3 mt-4">
+            <button
+              onClick={runAnalysis}
+              disabled={!file || state === "loading" || state === "streaming"}
+              className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500 disabled:opacity-50"
+            >
+              Run
+            </button>
+
+            <button
+              onClick={cancel}
+              className="px-4 py-2 bg-red-600 rounded hover:bg-red-500"
+            >
+              Stop
+            </button>
+          </div>
+        </section>
+
+        {/* Status */}
+        <div className="mt-4 text-sm text-gray-400">
+          Status:{" "}
+          <span className="text-white">
+            {getStatusText()}
+          </span>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="mt-4 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Output */}
+        {result && (
+          <motion.section
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="mt-6 border border-gray-800 rounded-lg p-4 bg-gray-900"
+          >
+            <h2 className="text-xs text-gray-500 mb-2 uppercase tracking-wide">
+              Output Stream
+            </h2>
+
+            <pre className="whitespace-pre-wrap text-sm leading-relaxed">
+              {result}
+            </pre>
+          </motion.section>
+        )}
+
+        {/* Empty State */}
+        {!file && (
+          <div className="mt-10 text-center text-gray-600 text-sm">
+            Select a file to begin processing
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
